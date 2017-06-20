@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 import glob
 from sklearn.utils import shuffle
+import time
 
 ImageNet_path = 'enter path'
 
@@ -41,6 +42,15 @@ class inception_weight:
 
             self.pool = layer_weight(1, input, pool_one, mu, sigma, 'Pool')
 
+class aux_weight:
+    def __init__(self, input, map, mu, sigma, name):
+        with tf.name_scope(name):
+            self.red = layer_weight(1, input, 128, mu, sigma, 'Reduction')
+
+            self.fc1 = layer_weight(None, map * map * 128, 1024, mu, sigma, 'FC1', fc=True)
+
+            self.fc2 = layer_weight(None, 1024, 1000, mu, sigma, 'FC2', fc=True)
+
 class weights:
     def __init__(self, mu, sigma):
         with tf.name_scope('Parameters'):
@@ -49,17 +59,20 @@ class weights:
             self.inception1 = inception_weight(192, 64, 96, 128, 16, 32, 32, mu, sigma, 'Inception1')
             self.inception2 = inception_weight(256, 128, 128, 192, 32, 96, 64, mu, sigma, 'Inception2')
             self.inception3 = inception_weight(480, 192, 96, 208, 16, 48, 64, mu, sigma, 'Inception3')
+            self.aux2 = aux_weight(512, 6, mu, sigma, 'Auxillary2')
             self.inception4 = inception_weight(512, 160, 112, 224, 24, 64, 64, mu, sigma, 'Inception4')
             self.inception5 = inception_weight(512, 128, 128, 256, 24, 64, 64, mu, sigma, 'Inception5')
             self.inception6 = inception_weight(512, 112, 144, 288, 32, 64, 64, mu, sigma, 'Inception6')
+            self.aux1 = aux_weight(528, 6, mu, sigma, 'Auxillary1')
             self.inception7 = inception_weight(528, 256, 160, 320, 32, 128, 128, mu, sigma, 'Inception7')
             self.inception8 = inception_weight(832, 256, 160, 320, 32, 128, 128, mu, sigma, 'Inception8')
             self.inception9 = inception_weight(832, 384, 192, 384, 48, 128, 128, mu, sigma, 'Inception9')
-            self.fc = layer_weight(None, 1024, 1000, mu, sigma, 'Fully_Connected', fc=True)
+            self.fc = layer_weight(None, 8*8*1024, 1000, mu, sigma, 'Fully_Connected', fc=True)
 
 def convolve(x, w, b, stride, name):
     with tf.name_scope(name):
         out = tf.nn.conv2d(x, w, [1,stride,stride,1], 'SAME') + b
+        out = tf.nn.relu(out)
         tf.summary.histogram(name, out)
     return out
 
@@ -92,19 +105,41 @@ def inception(x, weights, name):
         first = convolve(x, weights.one.w, weights.one.b, 1, '1x1')
 
         second = convolve(x, weights.red_three.w, weights.red_three.b, 1, 'reduce_3x3')
+        second = tf.nn.relu(second)
         second = convolve(second, weights.three.w, weights.three.b, 1, '3x3')
 
         third = convolve(x, weights.red_five.w, weights.red_five.b, 1, 'reduce_5x5')
+        third = tf.nn.relu(third)
         third = convolve(third, weights.five.w, weights.five.b, 1, '5x5')
 
-
-        fourth = max_pool(x, 3, 2, 'Pool')
+        fourth = max_pool(x, 3, 1, 'Pool')
         fourth = convolve(fourth, weights.pool.w, weights.pool.b, 1, 'Pool')
 
         out = tf.concat([first, second, third, fourth], axis=3)
+        out = tf.nn.relu(out)
+
         tf.summary.histogram(name, out)
 
     return out
+
+def auxillary(x, weights, name):
+    with tf.name_scope(name):
+        pool = avg_pool(x, 5, 3, 'pool')
+
+        reduced = convolve(pool, weights.red.w, weights.red.b, 1, 'red')
+        reduced = tf.nn.relu(reduced)
+
+        flat = tf.contrib.layers.flatten(reduced)
+
+        fc1 = fully_connected(flat, weights.fc1.w, weights.fc1.b, 'fc1')
+        fc1 = tf.nn.relu(fc1)
+
+        drop = dropout(fc1, keep_prob2, 'dropout')
+
+        fc2 = fully_connected(drop, weights.fc2.w, weights.fc2.b, 'fc2')
+        fc2 = tf.nn.relu(fc2)
+
+    return fc2
 
 def network(x, weights):
     first = convolve(x, weights.l1.w, weights.l1.b, 2, 'Layer1')
@@ -123,11 +158,15 @@ def network(x, weights):
 
     inception3 = inception(pool3, weights.inception3, 'Inception3')
 
+    aux2 = auxillary(inception3, weights.aux2, 'Auxillary2')
+
     inception4 = inception(inception3, weights.inception4, 'Inception4')
 
     inception5 = inception(inception4, weights.inception5, 'Inception5')
 
     inception6 = inception(inception5, weights.inception6, 'Inception6')
+
+    aux1 = auxillary(inception6, weights.aux1, 'Auxillary1')
 
     inception7 = inception(inception6, weights.inception7, 'Inception7')
 
@@ -135,32 +174,43 @@ def network(x, weights):
 
     inception8 = inception(pool4, weights.inception8, 'Inception8')
 
-    inception9 = inception(inception8, wieghts.inception9, 'Inception9')
+    inception9 = inception(inception8, weights.inception9, 'Inception9')
 
     pool5 = avg_pool(inception9, 7, 1, 'Pool5')
 
-    drop = dropout(pool5, keep_prob, 'Dropout')
+    drop = dropout(pool5, keep_prob1, 'Dropout')
 
-    fc = fully_connected(drop, weights.fc.w, weights.fc.b, 'Fully_Connected')
+    flat = tf.contrib.layers.flatten(drop)
 
-    return fc
+    fc = fully_connected(flat, weights.fc.w, weights.fc.b, 'Fully_Connected')
+
+    return fc, aux1, aux2
+
 
 
 tf_input = tf.placeholder(tf.float32, (None, 256, 256, 3))
 tf_target = tf.placeholder(tf.int32, (None))
+keep_prob1 = tf.placeholder(tf.float32, ())
+keep_prob2 = tf.placeholder(tf.float32, ())
+
 
 mu = 0
 sigma = .01
 weights = weights(mu, sigma)
-logits = network(tf_input, weights)
+logits1, logits2, logits3 = network(tf_input, weights)
 
 one_hot_y = tf.one_hot(tf_target, num_classes)
 
-keep_prob = tf.placeholder(tf.float32, 1)
 
 with tf.name_scope('Cross_Entropy'):
-    cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=one_hot_y)
-    tf.summary.histogram('Cross_Entropy', cross_entropy)
+    cross_entropy1 = tf.nn.softmax_cross_entropy_with_logits(logits=logits1, labels=one_hot_y)
+    tf.summary.histogram('Cross_Entropy1', cross_entropy1)
+
+    cross_entropy2 = tf.nn.softmax_cross_entropy_with_logits(logits=logits2, labels=one_hot_y)
+    tf.summary.histogram('Cross_Entropy2', cross_entropy1)
+
+    cross_entropy3 = tf.nn.softmax_cross_entropy_with_logits(logits=logits3, labels=one_hot_y)
+    tf.summary.histogram('Cross_Entropy3', cross_entropy1)
 
 with tf.name_scope('l2_loss'):
     l2_loss = [tf.nn.l2_loss(w) for w in tf.get_collection('parameters')]
@@ -171,11 +221,17 @@ with tf.name_scope('weight_magnitude'):
     tf.summary.histogram('weight_magnitude', weight_magnitude)
 
 with tf.name_scope('cross_entropy_loss'):
-    cross_entropy_loss = tf.reduce_mean(cross_entropy)
-    tf.summary.scalar('Cross_entropy_loss', cross_entropy_loss)
+    cross_entropy_loss1 = tf.reduce_mean(cross_entropy1)
+    tf.summary.scalar('Cross_entropy_loss1', cross_entropy_loss1)
+
+    cross_entropy_loss2 = tf.reduce_mean(cross_entropy2)
+    tf.summary.scalar('Cross_entropy_loss2', cross_entropy_loss2)
+
+    cross_entropy_loss3 = tf.reduce_mean(cross_entropy3)
+    tf.summary.scalar('Cross_entropy_loss3', cross_entropy_loss3)
 
 with tf.name_scope('Loss'):
-    loss_operation = cross_entropy_loss + l2_loss
+    loss_operation = cross_entropy_loss1 + cross_entropy_loss2 + cross_entropy_loss3 + l2_loss
     tf.summary.histogram('Loss', loss_operation)
 
 # Define optimizer
@@ -194,18 +250,18 @@ training_operation = optimizer.minimize(loss_operation)
 
 # Define evaluation
 with tf.name_scope('Evaluation'):
-    correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(one_hot_y, 1))
+    correct_prediction = tf.equal(tf.argmax(logits1, 1), tf.argmax(one_hot_y, 1))
     accuracy_operation = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
     tf.summary.histogram('accuracy', accuracy_operation)
 
-def data_gen(fpaths):
+def data_gen(fpaths, labels):
     data = []
     for path in fpaths:
         temp = cv2.imread(path)
         temp = temp[:,:,::-1]
         temp = cv2.resize(temp, (size, size))
         data.append(temp)
-    return data
+    return data, labels
 
 def evaluate(X_data, y_data, batch_size):
     num_examples = len(X_data)
@@ -213,9 +269,8 @@ def evaluate(X_data, y_data, batch_size):
     sess = tf.get_default_session()
     for offset in range(0, num_examples, batch_size):
         end = offset + batch_size
-        batch_x = data_gen(X_data[offset:end])
-        batch_y = y_data[offset:end]
-        accuracy = sess.run(accuracy_operation, feed_dict={tf_input: batch_x, tf_target: batch_y, keep_prob: 1.0})
+        batch_x, batch_y = data_gen(X_data[offset:end], y_data[offset:end])
+        accuracy = sess.run(accuracy_operation, feed_dict={tf_input: batch_x, tf_target: batch_y, keep_prob1: 1.0, keep_prob2: 0.0})
         total_accuracy += (accuracy * len(batch_x))
     return total_accuracy / num_examples#, out
 
@@ -239,9 +294,8 @@ with tf.Session() as sess:
         for offset in range(0, len(train_fpaths), batch_size):
         #for offset in range(0, batch_size, batch_size):
             end = offset + batch_size
-            batch_x = data_gen(train_fpaths[offset:end])
-            batch_y = y_train[offset:end]
-            #_, out_summary = sess.run([training_operation, tensor_summary], feed_dict={tf_input: batch_x, tf_target: batch_y, keep_prob: .4, tf_epoch: np.floor(i/8)})
+            batch_x, batch_y = data_gen(train_fpaths[offset:end], y_train[offset:end])
+            _, out_summary = sess.run([training_operation, tensor_summary], feed_dict={tf_input: batch_x, tf_target: batch_y, keep_prob1: .5, keep_prob2: .7})
             writer.add_summary(out_summary,i)
 
         # Evaluate the network
