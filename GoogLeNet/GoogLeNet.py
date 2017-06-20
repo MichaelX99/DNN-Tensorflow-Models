@@ -224,10 +224,10 @@ with tf.name_scope('cross_entropy_loss'):
     cross_entropy_loss1 = tf.reduce_mean(cross_entropy1)
     tf.summary.scalar('Cross_entropy_loss1', cross_entropy_loss1)
 
-    cross_entropy_loss2 = tf.reduce_mean(cross_entropy2)
+    cross_entropy_loss2 = tf.multiply(tf.reduce_mean(cross_entropy2), 0.3)
     tf.summary.scalar('Cross_entropy_loss2', cross_entropy_loss2)
 
-    cross_entropy_loss3 = tf.reduce_mean(cross_entropy3)
+    cross_entropy_loss3 = tf.multiply(tf.reduce_mean(cross_entropy3), 0.3)
     tf.summary.scalar('Cross_entropy_loss3', cross_entropy_loss3)
 
 with tf.name_scope('Loss'):
