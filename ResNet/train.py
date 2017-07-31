@@ -9,7 +9,6 @@ import time
 import resnet
 import helper
 
-
 def tower_loss(scope, images, labels):
   """Calculate the total loss on a single tower running the CIFAR model.
 
@@ -76,7 +75,6 @@ def average_gradients(tower_grads):
   return average_grads
 
 def train():
-    global time
     with tf.Graph().as_default(), tf.device('/cpu:0'):
         train_fpaths, train_targets, valid_fpaths, valid_targets = helper.import_ImageNet(helper.IMAGENET)
 
@@ -97,26 +95,19 @@ def train():
         # Calculate the gradients for each model tower.
         tower_grads = []
         with tf.variable_scope(tf.get_variable_scope()):
-            for i in xrange(resnet.N_GPUS):
+            for i in range(resnet.N_GPUS+1):
                 with tf.device('/gpu:%d' % i):
                     with tf.name_scope('%s_%d' % (resnet.TOWER_NAME, i)) as scope:
                         # Calculate the loss for one tower of the CIFAR model. This function
                         # constructs the entire CIFAR model but shares the variables across
                         # all towers.
-
                         loss = tower_loss(scope, input_tensor, one_hot_target)
 
-                        # Reuse variables for the next tower.
                         tf.get_variable_scope().reuse_variables()
 
-                        # Calculate the gradients for the batch of data on this CIFAR tower.
                         grads = opt.compute_gradients(loss)
 
-                        # Keep track of the gradients across all towers.
                         tower_grads.append(grads)
-
-                        debug = resnet.inference(input_tensor)
-
 
         # We must calculate the mean of each gradient. Note that this is the
         # synchronization point across all towers.
@@ -132,7 +123,6 @@ def train():
         # Group all updates to into a single train op.
         train_op = tf.group(apply_gradient_op, variables_averages_op)
 
-
         # Build an initialization operation to run below.
         init = tf.global_variables_initializer()
 
@@ -142,19 +132,14 @@ def train():
         with tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)) as sess:
             sess.run(init)
 
-            for epoch in xrange(resnet.MAX_EPOCH):
-                for offset in range(0, len(train_fpaths), resnet.BATCH_SIZE):
+            for epoch in range(1):
+                #for offset in range(0, len(train_fpaths), resnet.BATCH_SIZE):
+                for offset in range(0, resnet.BATCH_SIZE, resnet.BATCH_SIZE):
                     end = offset + resnet.BATCH_SIZE
                     batch_x, batch_y = helper.generator(train_fpaths[offset:end], train_targets[offset:end])
-                    #start_time = time.time()
                     _, loss_value = sess.run([train_op, loss], feed_dict={input_tensor: batch_x, input_target: batch_y})
-                    #duration = time.time() - start_time
 
-                    #time = ('batch time = %.2f')
-                    #print(time % duration)
-                    print('here')
-
-                    tower_grads.clear()
+                    tower_grads[:] = []
 
 if __name__ == '__main__':
     train()

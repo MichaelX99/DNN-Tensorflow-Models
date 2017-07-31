@@ -3,6 +3,7 @@ import glob
 import tensorflow as tf
 from sklearn.utils import shuffle
 import cv2
+import numpy as np
 import resnet
 
 IMAGENET = '/home/mikep/hdd/DataSets/ImageNet2012/'
@@ -51,14 +52,19 @@ def import_ImageNet(ImageNet_fpath):
     return train_fpaths, train_targets, valid_fpaths, valid_targets
 
 def generator(fpaths, targets):
-    images = []
-    for path in fpaths:
-        temp = cv2.imread(path)
-        temp = cv2.cvtColor(temp, cv2.COLOR_BGR2RGB)
-        temp = tf.image.resize_image_with_crop_or_pad(temp, resnet.IMAGE_SIZE, resnet.IMAGE_SIZE)
-        images.append(temp)
+    output = tf.read_file(fpaths[0])
+    output = tf.image.decode_jpeg(contents=output, channels=3)
+    output = tf.image.resize_image_with_crop_or_pad(output, resnet.IMAGE_SIZE, resnet.IMAGE_SIZE)
+    output = tf.reshape(output, shape = [1, resnet.IMAGE_SIZE, resnet.IMAGE_SIZE, 3])
+    for i in range(len(fpaths)):
+        if i >= 1:
+            temp = tf.read_file(fpaths[i])
+            temp = tf.image.decode_jpeg(contents=temp, channels=3)
+            temp = tf.image.resize_image_with_crop_or_pad(temp, resnet.IMAGE_SIZE, resnet.IMAGE_SIZE)
+            temp = tf.reshape(temp, shape = [1, resnet.IMAGE_SIZE, resnet.IMAGE_SIZE, 3])
+            output = tf.concat([output, temp], axis=0)
 
-    return images, targets
+    return output.eval(), targets
 
 def variable_on_cpu(name, shape, initializer):
   """Helper to create a Variable stored on CPU memory.
