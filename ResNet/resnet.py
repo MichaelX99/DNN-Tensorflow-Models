@@ -3,7 +3,7 @@ import helper
 
 TOWER_NAME = 'tower'
 MOVING_AVERAGE_DECAY = 0.9999
-N_GPUS = 3
+N_GPUS = 2
 BATCH_SIZE = 256
 IMAGE_SIZE = 448
 MAX_EPOCH = 10
@@ -30,10 +30,12 @@ def inference(images):
                                          shape=[5, 5, 3, 64],
                                          stddev=5e-2,
                                          wd=0.0)
+
     conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
     biases = helper.variable_on_cpu('biases', [64], tf.constant_initializer(0.0))
     pre_activation = tf.nn.bias_add(conv, biases)
     conv1 = tf.nn.relu(pre_activation, name=scope.name)
+
 
   # pool1
   pool1 = tf.nn.max_pool(conv1, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1],
