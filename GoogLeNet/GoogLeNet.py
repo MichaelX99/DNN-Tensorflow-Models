@@ -3,13 +3,57 @@ import numpy as np
 import cv2
 import glob
 from sklearn.utils import shuffle
+import scipy.io as sio
 import time
 
-ImageNet_path = 'enter path'
-
-train_fpath = glob.glob(ImageNet_path + 'train/*/*.png')
-test_fpath = glob.glob(ImageNet_path + 'test/*/*.png')
 num_classes = 1000
+
+IMAGENET = '/home/mikep/hdd/DataSets/ImageNet2012/'
+BATCH_SIZE = 128
+SIZE = 256
+
+
+def import_ImageNet(ImageNet_fpath):
+    """Helper to import ImageNet
+
+    Args:
+      ImageNet_fpath: path to ImageNet
+
+    Returns:
+      train_fpaths: list of filepaths to every training example
+      train_target: list of numeric class labels for the training examples
+      valid_fpaths: list of filepaths to every validation example
+      valid_target: list of numeric class labels for the validation examples
+    """
+    meta = sio.loadmat(ImageNet_fpath + 'DevKit/data/meta.mat')
+    synsets = meta['synsets']
+
+    synset_ids = []
+    num_examples = []
+    for i in range(len(synsets)):
+        count = int(synsets[i][0][7][0][0])
+        if count != 0:
+            synset_ids.append(str(synsets[i][0][1][0]))
+            num_examples.append(count)
+
+    train_fpaths = []
+    train_targets = []
+
+    for i in range(len(synset_ids)):
+        temp = glob.glob(ImageNet_fpath + 'Images/Train/' + synset_ids[i] + '/*.JPEG')
+        train_fpaths += temp
+        train_targets += len(temp)*[i]
+
+    valid_fpaths = glob.glob(ImageNet_fpath + 'Images/Validation/*.JPEG')
+    valid_file = open(ImageNet_fpath + 'DevKit/data/ILSVRC2012_validation_ground_truth.txt')
+    valid_targets = []
+    for _ in range(len(valid_fpaths)):
+        valid_targets.append(int(valid_file.readline().replace('\n','')))
+
+    train_fpaths, train_targets = shuffle(train_fpaths, train_targets)
+    valid_fpaths, valid_targets = shuffle(valid_fpaths, valid_targets)
+
+    return train_fpaths, train_targets, valid_fpaths, valid_targets
 
 class layer_weight:
     def __init__(self, filter, input, output, mu, sigma, name, fc=False):
@@ -186,9 +230,9 @@ def network(x, weights):
 
     return fc, aux1, aux2
 
+train_fpaths, train_targets, valid_fpaths, valid_targets = import_ImageNet(IMAGENET)
 
-
-tf_input = tf.placeholder(tf.float32, (None, 256, 256, 3))
+tf_input = tf.placeholder(tf.float32, (None, SIZE, SIZE, 3))
 tf_target = tf.placeholder(tf.int32, (None))
 keep_prob1 = tf.placeholder(tf.float32, ())
 keep_prob2 = tf.placeholder(tf.float32, ())
@@ -255,11 +299,12 @@ with tf.name_scope('Evaluation'):
     tf.summary.histogram('accuracy', accuracy_operation)
 
 def data_gen(fpaths, labels):
+    global SIZE
     data = []
     for path in fpaths:
         temp = cv2.imread(path)
         temp = temp[:,:,::-1]
-        temp = cv2.resize(temp, (size, size))
+        temp = cv2.resize(temp, (SIZE, SIZE))
         data.append(temp)
     return data, labels
 
@@ -291,10 +336,10 @@ with tf.Session() as sess:
     print("Training")
     start_time = time.clock()
     for i in range(5):
-        for offset in range(0, len(train_fpaths), batch_size):
+        for offset in range(0, len(train_fpaths), BATCH_SIZE):
         #for offset in range(0, batch_size, batch_size):
-            end = offset + batch_size
-            batch_x, batch_y = data_gen(train_fpaths[offset:end], y_train[offset:end])
+            end = offset + BATCH_SIZE
+            batch_x, batch_y = data_gen(train_fpaths[offset:end], train_targets[offset:end])
             _, out_summary = sess.run([training_operation, tensor_summary], feed_dict={tf_input: batch_x, tf_target: batch_y, keep_prob1: .5, keep_prob2: .7})
             writer.add_summary(out_summary,i)
 
