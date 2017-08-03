@@ -90,20 +90,20 @@ def train():
         # Create an optimizer that performs gradient descent.
         opt = tf.train.AdamOptimizer(lr)
 
-        input_tensor = tf.placeholder(tf.float32, (helper.BATCH_SIZE, helper.IMAGE_SIZE, helper.IMAGE_SIZE, 3))
-        input_target = tf.placeholder(tf.int32, (helper.BATCH_SIZE))
-        one_hot_target = tf.one_hot(input_target, helper.NUM_CLASSES)
+        input_tensor = [tf.placeholder(tf.float32, (helper.BATCH_SIZE, helper.IMAGE_SIZE, helper.IMAGE_SIZE, 3)), tf.placeholder(tf.float32, (helper.BATCH_SIZE, helper.IMAGE_SIZE, helper.IMAGE_SIZE, 3)), tf.placeholder(tf.float32, (helper.BATCH_SIZE, helper.IMAGE_SIZE, helper.IMAGE_SIZE, 3))]
+        input_target = [tf.placeholder(tf.int32, (helper.BATCH_SIZE)), tf.placeholder(tf.int32, (helper.BATCH_SIZE)), tf.placeholder(tf.int32, (helper.BATCH_SIZE))]
+        one_hot_target = [tf.one_hot(input_target[0], helper.NUM_CLASSES), tf.one_hot(input_target[1], helper.NUM_CLASSES), tf.one_hot(input_target[2], helper.NUM_CLASSES)]
 
         # Calculate the gradients for each model tower.
         tower_grads = []
         with tf.variable_scope(tf.get_variable_scope()):
-            for i in range(helper.N_GPUS+1):
+            for i in range(helper.N_GPUS):
                 with tf.device('/gpu:%d' % i):
                     with tf.name_scope('%s_%d' % (helper.TOWER_NAME, i)) as scope:
                         # Calculate the loss for one tower of the CIFAR model. This function
                         # constructs the entire CIFAR model but shares the variables across
                         # all towers.
-                        loss = tower_loss(scope, input_tensor, one_hot_target)
+                        loss = tower_loss(scope, input_tensor[i], one_hot_target[i])
 
                         tf.get_variable_scope().reuse_variables()
 
@@ -141,15 +141,32 @@ def train():
                 train_loss = 0
                 valid_loss = 0
                 times_run = 0
-                for offset in range(0, len(train_fpaths), helper.BATCH_SIZE):
+                for offset in range(0, len(train_fpaths), helper.BATCH_SIZE*helper.N_GPUS):
                 #for offset in range(0, helper.BATCH_SIZE, helper.BATCH_SIZE):
-                    end = offset + helper.BATCH_SIZE
+                    end = offset + (helper.BATCH_SIZE*helper.N_GPUS)
                     batch_x, batch_y = helper.generator(train_fpaths[offset:end], train_targets[offset:end])
-                    _, loss_value = sess.run([train_op, loss], feed_dict={input_tensor: batch_x, input_target: batch_y})
+                    x0, x1, x2 = tf.split(batch_x, num_or_size_splits=3, axis=0)
+                    y0, y1, y2 = tf.split(batch_y, num_or_size_splits=3, axis=0)
+                    x0 = x0.eval()
+                    x1 = x1.eval()
+                    x2 = x2.eval()
+                    y0 = y0.eval()
+                    y1 = y1.eval()
+                    y2 = y2.eval()
+                    _, loss_value = sess.run([train_op, loss], feed_dict={input_tensor[0]: x0, input_tensor[1]: x1, input_tensor[2]: x2, input_target[0]: y0, input_target[1]: y1, input_target[2]: y2})
+                    print("train loss value = " + str(loss_value))
                     train_loss += loss_value
 
                     batch_x, batch_y = helper.generator(valid_fpaths[offset:end], valid_targets[offset:end])
-                    loss_value = sess.run(loss, feed_dict={input_tensor: batch_x, input_target: batch_y})
+                    x0, x1, x2 = tf.split(batch_x, num_or_size_splits=3, axis=0)
+                    y0, y1, y2 = tf.split(batch_y, num_or_size_splits=3, axis=0)
+                    x0 = x0.eval()
+                    x1 = x1.eval()
+                    x2 = x2.eval()
+                    y0 = y0.eval()
+                    y1 = y1.eval()
+                    y2 = y2.eval()
+                    loss_value = sess.run(loss, feed_dict={input_tensor[0]: x0, input_tensor[1]: x1, input_tensor[2]: x2, input_target[0]: y0, input_target[1]: y1, input_target[2]: y2})
                     valid_loss += loss_value
 
                     tower_grads[:] = []

@@ -8,7 +8,7 @@ import numpy as np
 IMAGENET = '/home/mikep/hdd/DataSets/ImageNet2012/'
 TOWER_NAME = 'tower'
 MOVING_AVERAGE_DECAY = 0.9999
-N_GPUS = 2
+N_GPUS = 3
 BATCH_SIZE = 64
 IMAGE_SIZE = 224
 MAX_EPOCH = 10
@@ -71,7 +71,7 @@ def generator(fpaths, targets):
             temp = tf.reshape(temp, shape = [1, IMAGE_SIZE, IMAGE_SIZE, 3])
             output = tf.concat([output, temp], axis=0)
 
-    return output.eval(), targets
+    return output, targets
 
 def variable_on_cpu(name, shape, initializer):
   """Helper to create a Variable stored on CPU memory.
