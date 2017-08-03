@@ -6,7 +6,8 @@ import tensorflow as tf
 import numpy as np
 import re
 import time
-import resnet
+import resnet34_model
+import resnet50_model
 import helper
 
 def tower_loss(scope, images, labels):
@@ -22,12 +23,12 @@ def tower_loss(scope, images, labels):
   """
 
   # Build inference Graph.
-  #logits = resnet.inference(images)
-  logits = resnet.debug_inference(images)
+  #logits = resnet34_model.inference(images)
+  logits = resnet50_model.inference(images)
 
   # Build the portion of the Graph calculating the losses. Note that we will
   # assemble the total_loss using a custom function below.
-  _ = resnet.loss(logits, labels)
+  _ = helper.loss(logits, labels)
 
   # Assemble all of the losses for the current tower only.
   losses = tf.get_collection('losses', scope)
@@ -89,16 +90,16 @@ def train():
         # Create an optimizer that performs gradient descent.
         opt = tf.train.AdamOptimizer(lr)
 
-        input_tensor = tf.placeholder(tf.float32, (resnet.BATCH_SIZE, resnet.IMAGE_SIZE, resnet.IMAGE_SIZE, 3))
-        input_target = tf.placeholder(tf.int32, (resnet.BATCH_SIZE))
-        one_hot_target = tf.one_hot(input_target, resnet.NUM_CLASSES)
+        input_tensor = tf.placeholder(tf.float32, (helper.BATCH_SIZE, helper.IMAGE_SIZE, helper.IMAGE_SIZE, 3))
+        input_target = tf.placeholder(tf.int32, (helper.BATCH_SIZE))
+        one_hot_target = tf.one_hot(input_target, helper.NUM_CLASSES)
 
         # Calculate the gradients for each model tower.
         tower_grads = []
         with tf.variable_scope(tf.get_variable_scope()):
-            for i in range(resnet.N_GPUS+1):
+            for i in range(helper.N_GPUS+1):
                 with tf.device('/gpu:%d' % i):
-                    with tf.name_scope('%s_%d' % (resnet.TOWER_NAME, i)) as scope:
+                    with tf.name_scope('%s_%d' % (helper.TOWER_NAME, i)) as scope:
                         # Calculate the loss for one tower of the CIFAR model. This function
                         # constructs the entire CIFAR model but shares the variables across
                         # all towers.
@@ -110,6 +111,8 @@ def train():
 
                         tower_grads.append(grads)
 
+
+
         # We must calculate the mean of each gradient. Note that this is the
         # synchronization point across all towers.
         grads = average_gradients(tower_grads)
@@ -118,7 +121,7 @@ def train():
         apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
 
         # Track the moving averages of all trainable variables.
-        variable_averages = tf.train.ExponentialMovingAverage(resnet.MOVING_AVERAGE_DECAY, global_step)
+        variable_averages = tf.train.ExponentialMovingAverage(helper.MOVING_AVERAGE_DECAY, global_step)
         variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
         # Group all updates to into a single train op.
@@ -133,14 +136,28 @@ def train():
         with tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)) as sess:
             sess.run(init)
 
+            #for epoch in range(helper.MAX_EPOCH):
             for epoch in range(1):
-                #for offset in range(0, len(train_fpaths), resnet.BATCH_SIZE):
-                for offset in range(0, resnet.BATCH_SIZE, resnet.BATCH_SIZE):
-                    end = offset + resnet.BATCH_SIZE
+                train_loss = 0
+                valid_loss = 0
+                times_run = 0
+                for offset in range(0, len(train_fpaths), helper.BATCH_SIZE):
+                #for offset in range(0, helper.BATCH_SIZE, helper.BATCH_SIZE):
+                    end = offset + helper.BATCH_SIZE
                     batch_x, batch_y = helper.generator(train_fpaths[offset:end], train_targets[offset:end])
                     _, loss_value = sess.run([train_op, loss], feed_dict={input_tensor: batch_x, input_target: batch_y})
+                    train_loss += loss_value
+
+                    batch_x, batch_y = helper.generator(valid_fpaths[offset:end], valid_targets[offset:end])
+                    loss_value = sess.run(loss, feed_dict={input_tensor: batch_x, input_target: batch_y})
+                    valid_loss += loss_value
 
                     tower_grads[:] = []
+                    times_run += 1
+
+                train_loss /= times_run
+                valid_loss /= times_run
+                print("epoch: "+str(epoch)+", training loss = "+str(train_loss)+", validation loss = "+str(valid_loss))
 
 if __name__ == '__main__':
     train()
