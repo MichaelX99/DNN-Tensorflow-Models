@@ -33,7 +33,7 @@ def _int64_feature(value):
 def _bytes_feature(value):
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
-ImageNet_fpath = '../'
+ImageNet_fpath = '/home/mikep/hdd/DataSets/ImageNet2012/'
 
 meta = sio.loadmat(ImageNet_fpath + 'DevKit/data/meta.mat')
 synsets = meta['synsets']
@@ -76,10 +76,10 @@ train_diff = N_train - (num_train*train_per_file)
 valid_diff = N_valid - (num_valid*valid_per_file)
 #############################################################################################
 print("Starting Validation Transform")
-if not os.path.isdir('TFRecord/Validation'):
-    os.makedirs('TFRecord/Validation')
+if not os.path.isdir(ImageNet_fpath + 'TFRecord/Validation'):
+    os.makedirs(ImageNet_fpath + 'TFRecord/Validation')
 for i in range(num_valid):
-    writer_fpath = 'TFRecord/Validation/valid_' + str(i) + '.tfrecords'
+    writer_fpath = ImageNet_fpath + 'TFRecord/Validation/valid_' + str(i) + '.tfrecords'
     writer = tf.python_io.TFRecordWriter(writer_fpath)
 
     if i != num_valid - 1:
@@ -109,10 +109,10 @@ for i in range(num_valid):
     print('Finished writing file #'+str(i))
 #############################################################################################
 print("Starting Training Transform")
-if not os.path.isdir('TFRecord/Train'):
-    os.makedirs('TFRecord/Train')
+if not os.path.isdir(ImageNet_fpath + 'TFRecord/Train'):
+    os.makedirs(ImageNet_fpath + 'TFRecord/Train')
 for i in range(num_train):
-    writer_fpath = 'TFRecord/Train/train_' + str(i) + '.tfrecords'
+    writer_fpath = ImageNet_fpath + 'TFRecord/Train/train_' + str(i) + '.tfrecords'
     writer = tf.python_io.TFRecordWriter(writer_fpath)
 
     if i != num_train - 1:
