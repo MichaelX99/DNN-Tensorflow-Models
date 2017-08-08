@@ -13,3 +13,6 @@ This implements GoogLeNet and the inception module.  This also marked my officia
 
 4- ResNet
 This is a massive shift from the 3 previous networks.  This was the first network that I wrote the whole code on my new computer and therefore includes a naive implementation of a multi-gpu system.  This includes alot of the CIFAR10 tutorial code however tailored to my ability and understanding at the time.  The largest failures with this implementation is my inability to use Queue Runners which therefore makes the training time basically intractable.  However I did use some of the functions in the image portion of Tensorflow which will be the basis of the next network.
+
+5- DenseNet
+This is the last model implementation that will be of classification networks alone.  The last major change that I will implement is the imput pipeline will be a queue import from TFRecord files that I made.  The reason for this change is because using the feed_dict method starved my gpu's of data and my network went nowhere fast.  The script that created the TFRecord files is in the ImageNet_Processing directory.
