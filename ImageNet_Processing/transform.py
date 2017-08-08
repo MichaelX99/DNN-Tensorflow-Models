@@ -22,6 +22,7 @@ def load_image(addr):
     img[:,:,0] = (img[:,:,0] - mean[0]) / adjusted_stddev[0]
     img[:,:,1] = (img[:,:,1] - mean[1]) / adjusted_stddev[1]
     img[:,:,2] = (img[:,:,2] - mean[2]) / adjusted_stddev[2]
+
     img = img.astype(np.uint8)
 
     return img, height, width
@@ -66,8 +67,8 @@ valid_fpaths, valid_targets = shuffle(valid_fpaths, valid_targets)
 N_train = len(train_fpaths)
 N_valid = len(valid_fpaths)
 
-num_train = 32
-num_valid = 8
+num_train = 1024
+num_valid = 128
 
 train_per_file = N_train/num_train
 valid_per_file = N_valid/num_valid
