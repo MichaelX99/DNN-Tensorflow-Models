@@ -23,8 +23,8 @@ def tower_loss(scope, images, labels):
   """
 
   # Build inference Graph.
-  #logits = resnet34_model.inference(images)
-  logits = resnet50_model.inference(images)
+  logits = resnet34_model.inference(images)
+  #logits = resnet50_model.inference(images)
 
   # Build the portion of the Graph calculating the losses. Note that we will
   # assemble the total_loss using a custom function below.

@@ -140,14 +140,14 @@ def loss(logits, labels):
   # decay terms (L2 loss).
   return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
-def convolution(images, shape, decay, stride, in_scope):
+def convolution(input, shape, decay, stride, in_scope):
     with tf.variable_scope(in_scope) as scope:
         kernel = variable_with_weight_decay('weights',
                                             shape=shape,
                                             stddev=5e-2,
                                             wd=decay)
 
-        conv = tf.nn.conv2d(images, kernel, [1, stride, stride, 1], padding='SAME')
+        conv = tf.nn.conv2d(input, kernel, [1, stride, stride, 1], padding='SAME')
         biases = variable_on_cpu('biases', shape[3], tf.constant_initializer(0.0))
         pre_activation = tf.nn.bias_add(conv, biases)
         conv = tf.nn.relu(pre_activation, name=scope.name)
@@ -155,29 +155,22 @@ def convolution(images, shape, decay, stride, in_scope):
 
     return batch_norm
 
-def projection(convolved_input, input, decay, in_scope):
-    convolved_shape = convolved_input.get_shape().as_list()
+def block_convolution(input, depth, decay, stride, in_scope):
+    shape = input.get_shape().as_list()
+    with tf.variable_scope(in_scope):
+        conv1 = convolution(input, [3,3,shape[3],shape[3]], decay, 1, 'conv1')
+
+        conv2 = convolution(conv1, [3,3,shape[3],depth], decay, stride, 'conv2')
+
+    return conv2
+
+def bottleneck_convolution(input, reducer, expansion, decay, stride, in_scope):
     shape = input.get_shape().as_list()
     with tf.variable_scope(in_scope) as scope:
-        kernel = variable_with_weight_decay('weights',
-                                            shape=[1,1, convolved_shape[3], shape[3]],
-                                            stddev=5e-2,
-                                            wd=decay)
+        embedding = convolution(input, [1,1,shape[3],reducer], decay, 1, 'reduce')
 
-        conv = tf.nn.conv2d(convolved_input, kernel, [1, 2, 2, 1], padding='SAME')
-        biases = variable_on_cpu('biases', shape[3], tf.constant_initializer(0.0))
-        pre_activation = tf.nn.bias_add(conv, biases)
+        conv = convolution(embedding, [3,3,reducer,reducer], decay, 1, 'conv')
 
-        output = tf.add(pre_activation, input)
-
-    return output
-
-def bottleneck_convolution(images, reducer, shape, decay, stride, in_scope):
-    with tf.variable_scope(in_scope) as scope:
-        embedding = convolution(images, [1,1,shape[2],reducer], decay, 1, 'reduce')
-
-        conv = convolution(embedding, [shape[0],shape[1],reducer,reducer], decay, 1, 'conv')
-
-        output = convolution(conv, [1,1,reducer,shape[3]], decay, stride, 'restore')
+        output = convolution(conv, [1,1,reducer,expansion], decay, stride, 'expand')
 
     return output
