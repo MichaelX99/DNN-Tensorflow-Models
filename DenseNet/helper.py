@@ -4,6 +4,7 @@ import tensorflow as tf
 from sklearn.utils import shuffle
 import cv2
 import numpy as np
+import os
 
 IMAGENET = '/home/mikep/hdd/DataSets/ImageNet2012/'
 TOWER_NAME = 'tower'
@@ -15,7 +16,7 @@ MAX_EPOCH = 10
 NUM_CLASSES = 1000
 DECAY = 0.0001
 
-def read_imagenet(filename_queue):
+def read_imagenet(serialized_example):
   """Reads and parses examples from CIFAR10 data files.
 
   Recommendation: if you want N-way read parallelism, call this function
@@ -37,76 +38,61 @@ def read_imagenet(filename_queue):
       uint8image: a [height, width, depth] uint8 Tensor with the image data
   """
 
-  class ImageNetRecord(object):
-    pass
-  result = ImageNetRecord()
-
-  feature = {'valid/label': tf.FixedLenFeature([], tf.int64),
-             'valid/height': tf.FixedLenFeature([], tf.int64),
-             'valid/width': tf.FixedLenFeature([], tf.int64),
-             'valid/channels': tf.FixedLenFeature([], tf.int64),
-             'valid/image': tf.FixedLenFeature([], tf.string)}
-  # Define a reader and read the next record
-  reader = tf.TFRecordReader()
-  result.key, serialized_example = reader.read(filename_queue)
+  feature = {'train/label': tf.FixedLenFeature([], tf.int64),
+             'train/height': tf.FixedLenFeature([], tf.int64),
+             'train/width': tf.FixedLenFeature([], tf.int64),
+             'train/channels': tf.FixedLenFeature([], tf.int64),
+             'train/image': tf.FixedLenFeature([], tf.string)}
 
   # Decode the record read by the reader
   features = tf.parse_single_example(serialized_example, features=feature)
 
   # Convert the image data from string back to the numbers
-  image = tf.decode_raw(features['valid/image'], tf.uint8)
+  image = tf.decode_raw(features['train/image'], tf.uint8)
 
-  result.label = tf.cast(features['valid/label'], tf.int32)
-  result.height = tf.cast(features['valid/height'], tf.int32)
-  result.width = tf.cast(features['valid/width'], tf.int32)
-  result.channels = tf.cast(features['valid/channels'], tf.int32)
+  label = tf.cast(features['train/label'], tf.int32)
+  height = tf.cast(features['train/height'], tf.int32)
+  width = tf.cast(features['train/width'], tf.int32)
+  channels = tf.cast(features['train/channels'], tf.int32)
 
 
-  shape = tf.parallel_stack([result.height, result.width, result.channels])
+  shape = tf.parallel_stack([height, width, channels])
 
-  result.uint8image = tf.reshape(image, shape=shape)
+  image = tf.reshape(image, shape=shape)
+  image = tf.cast(image, tf.float32)
 
-  return result
+  return image, label
 
-def _generate_image_and_label_batch(image, label, min_queue_examples,
-                                    batch_size, shuffle):
-  """Construct a queued batch of images and labels.
+def image_preprocessing(image, thread_id):
+  """Decode and preprocess one image for evaluation or training.
 
   Args:
-    image: 3-D Tensor of [height, width, 3] of type.float32.
-    label: 1-D Tensor of type.int32
-    min_queue_examples: int32, minimum number of samples to retain
-      in the queue that provides of batches of examples.
-    batch_size: Number of images per batch.
-    shuffle: boolean indicating whether to use a shuffling queue.
+    image_buffer: JPEG encoded string Tensor
+    bbox: 3-D float Tensor of bounding boxes arranged [1, num_boxes, coords]
+      where each coordinate is [0, 1) and the coordinates are arranged as
+      [ymin, xmin, ymax, xmax].
+    train: boolean
+    thread_id: integer indicating preprocessing thread
 
   Returns:
-    images: Images. 4D tensor of [batch_size, height, width, 3] size.
-    labels: Labels. 1D tensor of [batch_size] size.
+    3-D float Tensor containing an appropriately scaled image
+
+  Raises:
+    ValueError: if user does not provide bounding box
   """
-  # Create a queue that shuffles the examples, and then
-  # read 'batch_size' images + labels from the example queue.
-  num_preprocess_threads = 16
-  if shuffle:
-    images, label_batch = tf.train.shuffle_batch(
-        [image, label],
-        batch_size=batch_size,
-        num_threads=num_preprocess_threads,
-        capacity=min_queue_examples + 3 * batch_size,
-        min_after_dequeue=min_queue_examples)
-  else:
-    images, label_batch = tf.train.batch(
-        [image, label],
-        batch_size=batch_size,
-        num_threads=num_preprocess_threads,
-        capacity=min_queue_examples + 3 * batch_size)
+  #image = distort_image(image, height, width, thread_id)
 
-  # Display the training images in the visualizer.
-  tf.summary.image('images', images)
+  image = tf.image.resize_image_with_crop_or_pad(image, IMAGE_SIZE, IMAGE_SIZE)
 
-  return images, tf.reshape(label_batch, [batch_size])
+  # Finally, rescale to [-1,1] instead of [0, 1)
+  image = tf.subtract(image, 0.5)
+  image = tf.multiply(image, 2.0)
 
-def generator(data_dir, batch_size):
+  image.set_shape([IMAGE_SIZE,IMAGE_SIZE,3])
+
+  return image
+
+def generator():
     """Construct distorted input for CIFAR training using the Reader ops.
 
     Args:
@@ -117,59 +103,70 @@ def generator(data_dir, batch_size):
       images: Images. 4D tensor of [batch_size, IMAGE_SIZE, IMAGE_SIZE, 3] size.
       labels: Labels. 1D tensor of [batch_size] size.
     """
-    filenames = [os.path.join(data_dir, 'valid_%d.tfrecords' % i)
-                 for i in range(128)]
-    for f in filenames:
+    data_dir = os.path.join(IMAGENET, 'TFRecord/Train/')
+    data_files = [os.path.join(data_dir, 'train_%d.tfrecords' % i)
+                 for i in range(1024)]
+
+    for f in data_files:
       if not tf.gfile.Exists(f):
         raise ValueError('Failed to find file: ' + f)
 
-    # Create a queue that produces the filenames to read.
-    filename_queue = tf.train.string_input_producer(filenames)
+    with tf.name_scope('batch_processing'):
+        # Create filename_queue
+        filename_queue = tf.train.string_input_producer(data_files, shuffle=True, capacity=16)
 
-    # Read examples from files in the filename queue.
-    read_input = read_imagenet(filename_queue)
-    reshaped_image = tf.cast(read_input.uint8image, tf.float32)
+        num_preprocess_threads = 4
+        num_readers = 4
+        input_queue_memory_factor = 16
 
-    height = IMAGE_SIZE
-    width = IMAGE_SIZE
+        # Approximate number of examples per shard.
+        examples_per_shard = 1024
+        # Size the random shuffle queue to balance between good global
+        # mixing (more examples) and memory use (fewer examples).
+        # 1 image uses 299*299*3*4 bytes = 1MB
+        # The default input_queue_memory_factor is 16 implying a shuffling queue
+        # size: examples_per_shard * 16 * 1MB = 17.6GB
+        min_queue_examples = examples_per_shard * input_queue_memory_factor
 
-    # Image processing for training the network. Note the many random
-    # distortions applied to the image.
-    distorted_image = tf.image.resize_image_with_crop_or_pad(reshaped_image, height, width)
+        examples_queue = tf.RandomShuffleQueue(
+                capacity=min_queue_examples + 3 * BATCH_SIZE,
+                min_after_dequeue=min_queue_examples,
+                dtypes=[tf.string])
 
-    # Randomly flip the image horizontally.
-    float_image = tf.image.random_flip_left_right(distorted_image)
+        # Create multiple readers to populate the queue of examples.
+        enqueue_ops = []
+        for _ in range(num_readers):
+            reader = tf.TFRecordReader()
+            _, value = reader.read(filename_queue)
+            enqueue_ops.append(examples_queue.enqueue([value]))
 
-    # Set the shapes of tensors.
-    float_image.set_shape([height, width, 3])
+        tf.train.queue_runner.add_queue_runner(
+            tf.train.queue_runner.QueueRunner(examples_queue, enqueue_ops))
 
-    # Ensure that the random shuffling has good mixing properties.
-    min_fraction_of_examples_in_queue = 0.4
-    min_queue_examples = int(NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN *
-                             min_fraction_of_examples_in_queue)
+        example_serialized = examples_queue.dequeue()
 
-    # Generate a batch of images and labels by building up a queue of examples.
-    return _generate_image_and_label_batch(float_image, read_input.label,
-                                           min_queue_examples, batch_size,
-                                           shuffle=True)
+        images_and_labels = []
+        for thread_id in range(num_preprocess_threads):
+          # Parse a serialized Example proto to extract the image and metadata.
+          image, label = read_imagenet(example_serialized)
 
-def distorted_inputs():
-  """Construct distorted input for CIFAR training using the Reader ops.
+          image = image_preprocessing(image, thread_id)
 
-  Returns:
-    images: Images. 4D tensor of [batch_size, IMAGE_SIZE, IMAGE_SIZE, 3] size.
-    labels: Labels. 1D tensor of [batch_size] size.
+          images_and_labels.append([image, label])
 
-  Raises:
-    ValueError: If no data_dir
-  """
-  if not FLAGS.data_dir:
-    raise ValueError('Please supply a data_dir')
-  data_dir = os.path.join(FLAGS.data_dir, 'Validation/')
-  images, labels = generator(data_dir=data_dir,
-                             batch_size=FLAGS.batch_size)
+        images, label_index_batch = tf.train.batch_join(
+          images_and_labels,
+          batch_size=BATCH_SIZE,
+          capacity=2 * num_preprocess_threads * BATCH_SIZE)
 
-  return images, labels
+        # Reshape images into these desired dimensions.
+        depth = 3
+        images = tf.reshape(images, shape=[BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, depth])
+
+        # Display the training images in the visualizer.
+        tf.summary.image('images', images)
+
+    return images, tf.reshape(label_index_batch, [BATCH_SIZE])
 
 
 def variable_on_cpu(name, shape, initializer):
@@ -230,7 +227,7 @@ def loss(logits, labels):
   """
   # Calculate the average cross entropy loss across the batch.
   labels = tf.cast(labels, tf.int64)
-  cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
+  cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
       labels=labels, logits=logits, name='cross_entropy_per_example')
   cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
   tf.add_to_collection('losses', cross_entropy_mean)

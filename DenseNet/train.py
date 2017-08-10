@@ -22,7 +22,6 @@ def tower_loss(scope, images, labels):
   """
 
   # Build inference Graph.
-  #logits = resnet34_model.inference(images)
   logits = densenet.inference(images)
 
   # Build the portion of the Graph calculating the losses. Note that we will
@@ -88,9 +87,9 @@ def train():
         opt = tf.train.AdamOptimizer(lr)
 
         # Get images and labels for CIFAR-10.
-        images, labels = helper.distorted_inputs()
+        images, labels = helper.generator()
         batch_queue = tf.contrib.slim.prefetch_queue.prefetch_queue(
-              [images, labels], capacity=2 * FLAGS.num_gpus)
+              [images, labels], capacity=2 * helper.N_GPUS)
 
         # Calculate the gradients for each model tower.
         tower_grads = []
@@ -134,6 +133,7 @@ def train():
         # implementations.
         with tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)) as sess:
             sess.run(init)
+            print("training")
 
             #for epoch in range(helper.MAX_EPOCH):
             for epoch in range(1):
@@ -142,9 +142,17 @@ def train():
                 times_run = 0
 
                 start_time = time.time()
-                #_, loss_value = sess.run([train_op, loss])
-                _, loss_value = sess.run([apply_gradient_op, loss])
+                _, loss_value = sess.run([train_op, loss])
                 duration = time.time() - start_time
+
+                num_examples_per_step = helper.BATCH_SIZE * helper.N_GPUS
+                examples_per_sec = num_examples_per_step / duration
+                sec_per_batch = duration / helper.N_GPUS
+
+                format_str = ('%s: step %d, loss = %.2f (%.1f examples/sec; %.3f '
+                                'sec/batch)')
+                print (format_str % (datetime.now(), step, loss_value,
+                                       examples_per_sec, sec_per_batch))
 
 if __name__ == '__main__':
     train()

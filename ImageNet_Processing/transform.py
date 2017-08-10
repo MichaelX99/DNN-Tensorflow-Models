@@ -67,7 +67,7 @@ valid_fpaths, valid_targets = shuffle(valid_fpaths, valid_targets)
 N_train = len(train_fpaths)
 N_valid = len(valid_fpaths)
 
-num_train = 1024
+num_train = 512
 num_valid = 128
 
 train_per_file = N_train/num_train
@@ -76,6 +76,7 @@ valid_per_file = N_valid/num_valid
 train_diff = N_train - (num_train*train_per_file)
 valid_diff = N_valid - (num_valid*valid_per_file)
 #############################################################################################
+"""
 print("Starting Validation Transform")
 if not os.path.isdir(ImageNet_fpath + 'TFRecord/Validation'):
     os.makedirs(ImageNet_fpath + 'TFRecord/Validation')
@@ -109,6 +110,7 @@ for i in range(num_valid):
     writer.close()
     print('Finished writing file #'+str(i))
 #############################################################################################
+"""
 print("Starting Training Transform")
 if not os.path.isdir(ImageNet_fpath + 'TFRecord/Train'):
     os.makedirs(ImageNet_fpath + 'TFRecord/Train')
