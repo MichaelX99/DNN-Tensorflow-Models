@@ -282,29 +282,20 @@ def convolution(images, shape, decay, stride, in_scope):
 
     return batch_norm
 
-def projection(convolved_input, input, decay, in_scope):
-    convolved_shape = convolved_input.get_shape().as_list()
-    shape = input.get_shape().as_list()
-    with tf.variable_scope(in_scope) as scope:
-        kernel = variable_with_weight_decay('weights',
-                                            shape=[1,1, convolved_shape[3], shape[3]],
-                                            stddev=5e-2,
-                                            wd=decay)
+def transition(input, k, scope):
+    transition = helper.convolution(input, [1,1,k,k], helper.DECAY, 1, scope)
+    transition = tf.nn.max_pool(transition, [1,3,3,1], [1,2,2,1], 'SAME')
 
-        conv = tf.nn.conv2d(convolved_input, kernel, [1, 2, 2, 1], padding='SAME')
-        biases = variable_on_cpu('biases', shape[3], tf.constant_initializer(0.0))
-        pre_activation = tf.nn.bias_add(conv, biases)
+    return transition
 
-        output = tf.add(pre_activation, input)
+def dense_block(input, k, b, scope):
+    conv = helper.convolution(input, [1,1,k,k], helper.DECAY, 1, scope+'_1')
+    conv = helper.convolution(conv, [3,3,k,k], helper.DECAY, 1, scope+'_2')
+    for i in range(b - 1):
+        l = helper.convolution(conv, [1,1,k,k], helper.DECAY, 1, scope + '_' + str(i+2) + '_1')
 
-    return output
+        l = helper.convolution(l, [3,3,k,k], helper.DECAY, 1, scope + '_' + str(i+2) + '_2')
 
-def bottleneck_convolution(images, reducer, shape, decay, stride, in_scope):
-    with tf.variable_scope(in_scope) as scope:
-        embedding = convolution(images, [1,1,shape[2],reducer], decay, 1, 'reduce')
+        conv = tf.concat([conv, l], axis=3)
 
-        conv = convolution(embedding, [shape[0],shape[1],reducer,reducer], decay, 1, 'conv')
-
-        output = convolution(conv, [1,1,reducer,shape[3]], decay, stride, 'restore')
-
-    return output
+    return conv
