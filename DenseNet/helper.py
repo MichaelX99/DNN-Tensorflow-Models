@@ -13,8 +13,11 @@ N_GPUS = 3
 BATCH_SIZE = 64
 IMAGE_SIZE = 224
 MAX_EPOCH = 10
-NUM_CLASSES = 1000
+NUM_CLASSES = 1000 + 1
 DECAY = 0.0001
+TRAIN_SHARDS = 128
+VALIDATION_SHARDS = 24
+NUM_THREADS = 8
 
 def read_imagenet(serialized_example):
   """Reads and parses examples from CIFAR10 data files.
@@ -38,32 +41,54 @@ def read_imagenet(serialized_example):
       uint8image: a [height, width, depth] uint8 Tensor with the image data
   """
 
-  feature = {'train/label': tf.FixedLenFeature([], tf.int64),
-             'train/height': tf.FixedLenFeature([], tf.int64),
-             'train/width': tf.FixedLenFeature([], tf.int64),
-             'train/channels': tf.FixedLenFeature([], tf.int64),
-             'train/image': tf.FixedLenFeature([], tf.string)}
+  feature = {'image/class/label': tf.FixedLenFeature([], tf.int64),
+             'image/height': tf.FixedLenFeature([], tf.int64),
+             'image/width': tf.FixedLenFeature([], tf.int64),
+             'image/channels': tf.FixedLenFeature([], tf.int64),
+             'image/encoded': tf.FixedLenFeature([], tf.string)}
 
   # Decode the record read by the reader
   features = tf.parse_single_example(serialized_example, features=feature)
 
-  # Convert the image data from string back to the numbers
-  image = tf.decode_raw(features['train/image'], tf.uint8)
+  label = tf.cast(features['image/class/label'], tf.int32)
+  height = tf.cast(features['image/height'], tf.int32)
+  width = tf.cast(features['image/width'], tf.int32)
+  channels = tf.cast(features['image/channels'], tf.int32)
 
-  label = tf.cast(features['train/label'], tf.int32)
-  height = tf.cast(features['train/height'], tf.int32)
-  width = tf.cast(features['train/width'], tf.int32)
-  channels = tf.cast(features['train/channels'], tf.int32)
+  return features['image/encoded'], label, height, width, channels
 
+ def distort_color(image, thread_id=0, scope=None):
+  """Distort the color of the image.
+  Each color distortion is non-commutative and thus ordering of the color ops
+  matters. Ideally we would randomly permute the ordering of the color ops.
+  Rather then adding that level of complication, we select a distinct ordering
+  of color ops for each preprocessing thread.
+  Args:
+    image: Tensor containing single image.
+    thread_id: preprocessing thread ID.
+    scope: Optional scope for name_scope.
+  Returns:
+    color-distorted image
+  """
+  with tf.name_scope(values=[image], name=scope, default_name='distort_color'):
+    color_ordering = thread_id % 2
 
-  shape = tf.parallel_stack([height, width, channels])
+    if color_ordering == 0:
+      image = tf.image.random_brightness(image, max_delta=32. / 255.)
+      image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+      image = tf.image.random_hue(image, max_delta=0.2)
+      image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
+    elif color_ordering == 1:
+      image = tf.image.random_brightness(image, max_delta=32. / 255.)
+      image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
+      image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+      image = tf.image.random_hue(image, max_delta=0.2)
 
-  image = tf.reshape(image, shape=shape)
-  image = tf.cast(image, tf.float32)
+    # The random_* ops do not necessarily clamp.
+    image = tf.clip_by_value(image, 0.0, 1.0)
+return image
 
-  return image, label
-
-def image_preprocessing(image, thread_id):
+def image_preprocessing(image_buffer, height, width, channels, thread_id):
   """Decode and preprocess one image for evaluation or training.
 
   Args:
@@ -80,17 +105,24 @@ def image_preprocessing(image, thread_id):
   Raises:
     ValueError: if user does not provide bounding box
   """
-  #image = distort_image(image, height, width, thread_id)
+  image = tf.image.decode_jpeg(image_buffer, channels=channels)
+  image = tf.image.convert_image_dtype(image, dtype=tf.float32)
 
-  image = tf.image.resize_image_with_crop_or_pad(image, IMAGE_SIZE, IMAGE_SIZE)
+  distorted_image = tf.image.resize_image_with_crop_or_pad(image, IMAGE_SIZE, IMAGE_SIZE)
+
+  distorted_image.set_shape([IMAGE_SIZE,IMAGE_SIZE,channels])
+
+  # Randomly flip the image horizontally.
+  distorted_image = tf.image.random_flip_left_right(distorted_image)
+
+  # Randomly distort the colors.
+  distorted_image = distort_color(distorted_image, thread_id)
 
   # Finally, rescale to [-1,1] instead of [0, 1)
-  image = tf.subtract(image, 0.5)
-  image = tf.multiply(image, 2.0)
+  distorted_image = tf.subtract(image, 0.5)
+  distorted_image = tf.multiply(image, 2.0)
 
-  image.set_shape([IMAGE_SIZE,IMAGE_SIZE,3])
-
-  return image
+  return distorted_image
 
 def generator():
     """Construct distorted input for CIFAR training using the Reader ops.
@@ -104,8 +136,7 @@ def generator():
       labels: Labels. 1D tensor of [batch_size] size.
     """
     data_dir = os.path.join(IMAGENET, 'TFRecord/Train/')
-    data_files = [os.path.join(data_dir, 'train_%d.tfrecords' % i)
-                 for i in range(1024)]
+    data_files = [os.path.join(data_dir, 'train_%d.tfrecords' % i)for i in range(TRAIN_SHARDS)]
 
     for f in data_files:
       if not tf.gfile.Exists(f):
@@ -148,9 +179,9 @@ def generator():
         images_and_labels = []
         for thread_id in range(num_preprocess_threads):
           # Parse a serialized Example proto to extract the image and metadata.
-          image, label = read_imagenet(example_serialized)
+          image_buffer, label, height, width, channels = read_imagenet(example_serialized)
 
-          image = image_preprocessing(image, thread_id)
+          image = image_preprocessing(image_buffer, height, width, channels, thread_id)
 
           images_and_labels.append([image, label])
 
@@ -160,6 +191,7 @@ def generator():
           capacity=2 * num_preprocess_threads * BATCH_SIZE)
 
         # Reshape images into these desired dimensions.
+        images = tf.cast(images, tf.float32)
         depth = 3
         images = tf.reshape(images, shape=[BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, depth])
 
@@ -167,7 +199,6 @@ def generator():
         tf.summary.image('images', images)
 
     return images, tf.reshape(label_index_batch, [BATCH_SIZE])
-
 
 def variable_on_cpu(name, shape, initializer):
   """Helper to create a Variable stored on CPU memory.

@@ -76,7 +76,6 @@ valid_per_file = N_valid/num_valid
 train_diff = N_train - (num_train*train_per_file)
 valid_diff = N_valid - (num_valid*valid_per_file)
 #############################################################################################
-"""
 print("Starting Validation Transform")
 if not os.path.isdir(ImageNet_fpath + 'TFRecord/Validation'):
     os.makedirs(ImageNet_fpath + 'TFRecord/Validation')
@@ -110,7 +109,6 @@ for i in range(num_valid):
     writer.close()
     print('Finished writing file #'+str(i))
 #############################################################################################
-"""
 print("Starting Training Transform")
 if not os.path.isdir(ImageNet_fpath + 'TFRecord/Train'):
     os.makedirs(ImageNet_fpath + 'TFRecord/Train')
