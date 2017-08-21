@@ -6,8 +6,12 @@ import tensorflow as tf
 import numpy as np
 import re
 import time
+from datetime import datetime
 import densenet
 import helper
+
+from imagenet_data import ImagenetData
+import image_processing
 
 def tower_loss(scope, images, labels):
   """Calculate the total loss on a single tower running the CIFAR model.
@@ -86,11 +90,20 @@ def train():
         # Create an optimizer that performs gradient descent.
         opt = tf.train.AdamOptimizer(lr)
 
-        split_batch_size = int(HELPER.BATCH_SIZE / helper.N_GPUS)
+        split_batch_size = int(helper.BATCH_SIZE / helper.N_GPUS)
         num_preprocess_threads = helper.NUM_THREADS * helper.N_GPUS
 
         # Get images and labels for CIFAR-10.
-        images, labels = helper.generator()
+        dataset = ImagenetData(subset='train')
+        assert dataset.data_files()
+
+        assert helper.BATCH_SIZE % helper.N_GPUS == 0, ('Batch size must be divisible by number of GPUs')
+        split_batch_size = int(helper.BATCH_SIZE / helper.N_GPUS)
+
+        # Override the number of preprocessing threads to account for the increased
+        # number of GPU towers.
+        num_preprocess_threads = helper.NUM_THREADS * helper.N_GPUS
+        images, labels = image_processing.distorted_inputs(dataset, batch_size=helper.BATCH_SIZE, num_preprocess_threads=num_preprocess_threads)
 
         # Split the batch of images and labels for towers.
         images_splits = tf.split(axis=0, num_or_size_splits=helper.N_GPUS, value=images)
@@ -105,7 +118,7 @@ def train():
                         # Calculate the loss for one tower of the CIFAR model. This function
                         # constructs the entire CIFAR model but shares the variables across
                         # all towers.
-                        loss = tower_loss(scope, images_split[i], labels_split[i])
+                        loss = tower_loss(scope, images_splits[i], labels_splits[i])
 
                         tf.get_variable_scope().reuse_variables()
 
@@ -134,28 +147,24 @@ def train():
         # Start running operations on the Graph. allow_soft_placement must be set to
         # True to build towers on GPU, as some of the ops do not have GPU
         # implementations.
-        with tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)) as sess:
-            sess.run(init)
-            print("training")
+        sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False))
+        sess.run(init)
+        tf.train.start_queue_runners(sess=sess)
+        print("training")
 
-            #for epoch in range(helper.MAX_EPOCH):
-            for epoch in range(1):
-                train_loss = 0
-                valid_loss = 0
-                times_run = 0
+        #for epoch in range(helper.MAX_EPOCH):
+        for epoch in range(helper.MAX_STEPS):
 
-                start_time = time.time()
-                _, loss_value = sess.run([train_op, loss])
-                duration = time.time() - start_time
+            start_time = time.time()
+            _, loss_value = sess.run([train_op, loss])
+            duration = time.time() - start_time
 
-                num_examples_per_step = helper.BATCH_SIZE * helper.N_GPUS
-                examples_per_sec = num_examples_per_step / duration
-                sec_per_batch = duration / helper.N_GPUS
+            num_examples_per_step = helper.BATCH_SIZE * helper.N_GPUS
+            examples_per_sec = num_examples_per_step / duration
+            sec_per_batch = duration / helper.N_GPUS
 
-                format_str = ('%s: step %d, loss = %.2f (%.1f examples/sec; %.3f '
-                                'sec/batch)')
-                print (format_str % (datetime.now(), step, loss_value,
-                                       examples_per_sec, sec_per_batch))
+            format_str = ('%s: step %d, loss = %.2f (%.1f examples/sec; %.3f sec/batch)')
+            print (format_str % (datetime.now(), i, loss_value, examples_per_sec, sec_per_batch))
 
 if __name__ == '__main__':
     train()
