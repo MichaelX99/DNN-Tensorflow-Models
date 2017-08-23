@@ -68,40 +68,6 @@ tf.app.flags.DEFINE_integer('input_queue_memory_factor', 16,
                             """4, 2 or 1, if host memory is constrained. See """
                             """comments in code for more details.""")
 
-
-def inputs(dataset, batch_size=None, num_preprocess_threads=None):
-  """Generate batches of ImageNet images for evaluation.
-
-  Use this function as the inputs for evaluating a network.
-
-  Note that some (minimal) image preprocessing occurs during evaluation
-  including central cropping and resizing of the image to fit the network.
-
-  Args:
-    dataset: instance of Dataset class specifying the dataset.
-    batch_size: integer, number of examples in batch
-    num_preprocess_threads: integer, total number of preprocessing threads but
-      None defaults to FLAGS.num_preprocess_threads.
-
-  Returns:
-    images: Images. 4D tensor of size [batch_size, FLAGS.image_size,
-                                       image_size, 3].
-    labels: 1-D integer Tensor of [FLAGS.batch_size].
-  """
-  if not batch_size:
-    batch_size = FLAGS.batch_size
-
-  # Force all input processing onto CPU in order to reserve the GPU for
-  # the forward inference and back-propagation.
-  with tf.device('/cpu:0'):
-    images, labels = batch_inputs(
-        dataset, batch_size, train=False,
-        num_preprocess_threads=num_preprocess_threads,
-        num_readers=1)
-
-  return images, labels
-
-
 def distorted_inputs(dataset, batch_size=None, num_preprocess_threads=None):
   """Generate batches of distorted versions of ImageNet images.
 
@@ -271,32 +237,6 @@ def distort_image(image, height, width, bbox, thread_id=0, scope=None):
                        tf.expand_dims(distorted_image, 0))
     return distorted_image
 
-
-def eval_image(image, height, width, scope=None):
-  """Prepare one image for evaluation.
-
-  Args:
-    image: 3-D float Tensor
-    height: integer
-    width: integer
-    scope: Optional scope for name_scope.
-  Returns:
-    3-D float Tensor of prepared image.
-  """
-  with tf.name_scope(values=[image, height, width], name=scope,
-                     default_name='eval_image'):
-    # Crop the central region of the image with an area containing 87.5% of
-    # the original image.
-    image = tf.image.central_crop(image, central_fraction=0.875)
-
-    # Resize the image to the original height and width.
-    image = tf.expand_dims(image, 0)
-    image = tf.image.resize_bilinear(image, [height, width],
-                                     align_corners=False)
-    image = tf.squeeze(image, [0])
-    return image
-
-
 def image_preprocessing(image_buffer, bbox, train, thread_id=0):
   """Decode and preprocess one image for evaluation or training.
 
@@ -428,26 +368,9 @@ def batch_inputs(dataset, batch_size, train, num_preprocess_threads=None,
       raise ValueError('No data files found for this dataset')
 
     # Create filename_queue
-    if train:
-      filename_queue = tf.train.string_input_producer(data_files,
+    filename_queue = tf.train.string_input_producer(data_files,
                                                       shuffle=True,
                                                       capacity=16)
-    else:
-      filename_queue = tf.train.string_input_producer(data_files,
-                                                      shuffle=False,
-                                                      capacity=1)
-    if num_preprocess_threads is None:
-      num_preprocess_threads = FLAGS.num_preprocess_threads
-
-    if num_preprocess_threads % 4:
-      raise ValueError('Please make num_preprocess_threads a multiple '
-                       'of 4 (%d % 4 != 0).', num_preprocess_threads)
-
-    if num_readers is None:
-      num_readers = FLAGS.num_readers
-
-    if num_readers < 1:
-      raise ValueError('Please make num_readers at least 1')
 
     # Approximate number of examples per shard.
     examples_per_shard = 1024
@@ -457,30 +380,20 @@ def batch_inputs(dataset, batch_size, train, num_preprocess_threads=None,
     # The default input_queue_memory_factor is 16 implying a shuffling queue
     # size: examples_per_shard * 16 * 1MB = 17.6GB
     min_queue_examples = examples_per_shard * FLAGS.input_queue_memory_factor
-    if train:
-      examples_queue = tf.RandomShuffleQueue(
+    examples_queue = tf.RandomShuffleQueue(
           capacity=min_queue_examples + 3 * batch_size,
           min_after_dequeue=min_queue_examples,
           dtypes=[tf.string])
-    else:
-      examples_queue = tf.FIFOQueue(
-          capacity=examples_per_shard + 3 * batch_size,
-          dtypes=[tf.string])
 
     # Create multiple readers to populate the queue of examples.
-    if num_readers > 1:
-      enqueue_ops = []
-      for _ in range(num_readers):
+    enqueue_ops = []
+    for _ in range(num_readers):
         reader = dataset.reader()
         _, value = reader.read(filename_queue)
         enqueue_ops.append(examples_queue.enqueue([value]))
 
-      tf.train.queue_runner.add_queue_runner(
-          tf.train.queue_runner.QueueRunner(examples_queue, enqueue_ops))
-      example_serialized = examples_queue.dequeue()
-    else:
-      reader = dataset.reader()
-      _, example_serialized = reader.read(filename_queue)
+    tf.train.queue_runner.add_queue_runner(tf.train.queue_runner.QueueRunner(examples_queue, enqueue_ops))
+    example_serialized = examples_queue.dequeue()
 
     images_and_labels = []
     for thread_id in range(num_preprocess_threads):
